@@ -24,6 +24,22 @@ from .store import MeetingStore, new_id, now_iso
 log = logging.getLogger(__name__)
 
 REVIEWABLE = {"PENDING_REVIEW", "MODIFIED"}
+_GREETING = re.compile(r"^\s*(hi|hello|hey|dear|good (morning|afternoon|evening)|greetings)\b", re.I)
+_CLOSING = re.compile(r"^\s*(best|kind|warm)?\s*(regards|wishes)|^\s*(thanks|thank you|cheers|sincerely)\b", re.I)
+
+
+def compose_body(body: str, to: list[dict], requester: str) -> str:
+    """House style for every email, whatever the model wrote or rewrote: a greeting, the message, a closing with the
+    requester's name, and the Tensor byline."""
+    text = re.sub(r"\n?—?\s*Sent via Tensor on behalf of .*$", "", body.strip(), flags=re.S).strip()
+    lines = text.splitlines()
+    if not lines or not _GREETING.match(lines[0]):
+        names = ", ".join(dict.fromkeys(c["name"].split()[0] for c in to)) or "team"
+        text = f"Hi {names},\n\n{text}"
+    tail = [l for l in text.splitlines() if l.strip()][-3:]
+    if not any(_CLOSING.match(l) for l in tail):
+        text += f"\n\nBest regards,\n{requester}"
+    return f"{text}\n\n—\nSent via Tensor on behalf of {requester}"
 PRIORITIES = ["Highest", "High", "Medium", "Low", "Lowest"]
 FIBONACCI = [1, 2, 3, 5, 8, 13]
 
@@ -64,8 +80,9 @@ class Actions:
         cc_people, unknown_cc = self.resolve_people(cc, people)
         if not to_people:
             raise ValueError(f"No known recipient among {to}; directory: {[p['name'] for p in people or directory(self.settings)]}")
-        payload = dict(to=_contacts(to_people), cc=_contacts(cc_people), subject=subject.strip(), body=body.strip(),
-                       unresolved=unknown_to + unknown_cc)
+        payload = dict(to=_contacts(to_people), cc=_contacts(cc_people), subject=subject.strip(),
+                       body=compose_body(body, _contacts(to_people), triggered_by), unresolved=unknown_to + unknown_cc,
+                       from_name=triggered_by)
         return await self._new_card(meeting_id, "EMAIL_DRAFT", triggered_by, payload, sources, "GMAIL" if self.settings.gmail_live else "SANDBOX_OUTBOX")
 
     async def draft_jira_plan(self, meeting_id, triggered_by, project_key, epic_title, tasks, sources, people=None) -> dict:
@@ -103,7 +120,7 @@ class Actions:
             if subject:
                 p["subject"] = subject.strip()
             if body:
-                p["body"] = body.strip()
+                p["body"] = compose_body(body, p["to"], p.get("from_name") or by)
             for names, field in ((add_cc, "cc"), (add_to, "to")):
                 if names:
                     found, unknown = self.resolve_people(names, people)

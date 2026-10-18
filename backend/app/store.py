@@ -195,12 +195,30 @@ class MeetingStore:
         return seg
 
     async def transcript(self, meeting_id: str, window_seconds: float = TRANSCRIPT_WINDOW_SECONDS) -> list[dict]:
-        """Rolling window (FR-1.1); older segments are deleted, not just hidden."""
+        """Rolling window (FR-1.1). Older segments are summarized into memory and then deleted by the runtime."""
         cutoff = time.time() - window_seconds
         segments = sorted(await self.backend.list(f"meetings/{meeting_id}/transcript"), key=lambda s: s["epoch"])
-        for old in [s for s in segments if s["epoch"] < cutoff]:
-            await self.backend.delete(f"meetings/{meeting_id}/transcript", old["id"])
         return [s for s in segments if s["epoch"] >= cutoff]
+
+    async def expired_transcript(self, meeting_id: str, window_seconds: float = TRANSCRIPT_WINDOW_SECONDS) -> list[dict]:
+        cutoff = time.time() - window_seconds
+        return sorted([s for s in await self.backend.list(f"meetings/{meeting_id}/transcript") if s["epoch"] < cutoff],
+                      key=lambda s: s["epoch"])
+
+    async def delete_segments(self, meeting_id: str, ids: list[str]) -> None:
+        for seg_id in ids:
+            await self.backend.delete(f"meetings/{meeting_id}/transcript", seg_id)
+
+    # ---- memory (see memory.py) --------------------------------------------------------------
+
+    async def memory(self, meeting_id: str) -> dict:
+        return await self.backend.get(f"meetings/{meeting_id}/memory", "state") or {}
+
+    async def save_memory(self, meeting_id: str, state: dict) -> None:
+        await self.backend.put(f"meetings/{meeting_id}/memory", "state", state)
+
+    async def clear_memory(self, meeting_id: str) -> None:
+        await self.backend.delete(f"meetings/{meeting_id}/memory", "state")
 
     async def clear_transcript(self, meeting_id: str) -> None:
         self.interim.pop(meeting_id, None)

@@ -52,7 +52,7 @@ def env():
     bq = FakeBQ()
     actions = Actions(settings, store, bq_client=bq)
     brain = FakeBrain(actions)
-    rt = MeetingRuntime("m-1", store, brain, actions)
+    rt = MeetingRuntime("m-1", store, brain, actions, settle=0)  # act on each final segment at once
     events = []
 
     async def listener(event, data):
@@ -80,24 +80,21 @@ async def test_empty_wake_waits_for_the_same_speaker(env):
     assert brain.calls == ["what was the success rate"]
 
 
-async def test_reported_repeated_names_acknowledge_once_then_accept_a_question(env):
+async def test_wake_word_alone_listens_silently_then_accepts_a_question(env):
     rt, store, _, brain, _, events = env
 
     class Voice:
         def synthesize(self, text):
-            return b"test audio"
+            raise AssertionError("waking up must not speak: the app plays a chime and animates the orb")
 
     rt.voice = Voice()
     for text in ["Hey, tensor.", "Tensor.", "Tensor."]:
         await rt.on_speech("Bot-1", text, final=True)
     tensor = await store.tensor("m-1")
-    assert tensor["status"] == "listening" and tensor["awaiting_command"] is True
+    assert tensor["status"] == "listening" and tensor["awaiting_command"] is True and tensor["note"] == WAKE_PROMPT
     assert brain.calls == []
-    acknowledgements = [d for e, d in events if e == "speak"]
-    assert len(acknowledgements) == 1
-    assert acknowledgements[0]["text"] == WAKE_PROMPT
-    assert base64.b64decode(acknowledgements[0]["audio_mp3_base64"]) == b"test audio"
-    assert [m["text"] for m in await store.chat("m-1")] == [WAKE_PROMPT]
+    assert not [d for e, d in events if e == "speak"]
+    assert await store.chat("m-1") == []  # nothing posted to chat either
     await rt.on_speech("Bot-2", "We should discuss the launch", final=True)
     assert brain.calls == []
     await rt.on_speech("Bot-1", "what was our success rate?", final=True)
@@ -139,7 +136,7 @@ async def test_repeated_name_refreshes_the_window_without_duplicate_greetings(en
     clock[0] += 10
     await rt.on_utterance("Bot-1", "What was the success rate?", "voice")
     assert brain.calls == ["What was the success rate?"]
-    assert len([d for e, d in events if e == "speak" and d["text"] == WAKE_PROMPT]) == 1
+    assert not [d for e, d in events if e == "speak" and d["text"] == WAKE_PROMPT]
 
 
 async def test_wake_stays_quiet_while_someone_else_is_talking(env):
@@ -147,7 +144,7 @@ async def test_wake_stays_quiet_while_someone_else_is_talking(env):
     await rt.vad("Bot-2", True)
     await rt.on_utterance("Bot-1", "Hey, Tensor.", "voice")
     assert (await store.tensor("m-1"))["awaiting_command"] is True
-    assert [m["text"] for m in await store.chat("m-1")] == [WAKE_PROMPT]
+    assert await store.chat("m-1") == []
     assert not [d for e, d in events if e == "speak"]
     assert brain.calls == []
 
@@ -172,37 +169,14 @@ def test_long_running_speech_remains_active_until_vad_stops(env):
     assert not rt.humans_speaking()
 
 
-async def test_barge_in_on_greeting_keeps_the_question_window_open(env):
+async def test_talking_after_the_greeting_keeps_the_question_window_open(env):
     rt, store, _, brain, _, events = env
     await rt.on_utterance("Bot-1", "Tensor.", "voice")
-    await rt.vad("Bot-1", True)
+    await rt.vad("Bot-1", True)  # starts asking straight away: Tensor keeps listening
     assert (await store.tensor("m-1"))["status"] == "listening"
-    assert any(e == "stop_audio" for e, _ in events)
+    assert not any(e == "stop_audio" for e, _ in events)
     await rt.on_utterance("Bot-1", "What was the success rate?", "voice")
     assert brain.calls == ["What was the success rate?"]
-
-
-async def test_slow_wake_audio_cannot_interrupt_the_answer(env):
-    rt, _, _, brain, _, events = env
-    started, release = threading.Event(), threading.Event()
-
-    class SlowWakeVoice:
-        def synthesize(self, text):
-            if text == WAKE_PROMPT:
-                started.set()
-                release.wait(timeout=5)
-            return b"test audio"
-
-    rt.voice = SlowWakeVoice()
-    greeting = asyncio.create_task(rt.on_utterance("Bot-1", "Tensor.", "voice"))
-    try:
-        assert await asyncio.to_thread(started.wait, 5)
-        await rt.on_utterance("Bot-1", "What was the success rate?", "voice")
-    finally:
-        release.set()
-        await greeting
-    assert brain.calls == ["What was the success rate?"]
-    assert not [d for e, d in events if e == "speak" and d["text"] == WAKE_PROMPT]
 
 
 async def test_repeated_name_does_not_replace_thinking_state(env):
@@ -264,11 +238,15 @@ async def test_long_answer_while_humans_talk_raises_hand_then_go_ahead_speaks(en
     assert (await store.tensor("m-1")).get("hand") is None
 
 
-async def test_barge_in_stops_tensor(env):
+async def test_tensor_finishes_its_sentence_unless_asked_to_stop(env):
     rt, store, _, _, _, events = env
     await rt.speak("A short answer that takes a few seconds to say aloud.")
-    await rt.vad("Sarah", True)
-    assert ("stop_audio", dict(reason="barge_in", by="Sarah")) in events
+    await rt.vad("Sarah", True)  # people talking over Tensor don't cut it off
+    await rt.on_speech("Sarah", "we should stop the rollout until the fix lands", final=False)
+    assert not any(e == "stop_audio" for e, _ in events)
+    assert (await store.tensor("m-1"))["status"] == "speaking"
+    await rt.on_speech("Sarah", "Tensor, stop", final=False)  # an explicit request does
+    assert ("stop_audio", dict(reason="asked_to_stop", by="Sarah")) in events
     assert (await store.tensor("m-1"))["status"] == "idle"
 
 
@@ -418,7 +396,8 @@ async def test_streamed_voice_sends_audio_and_stops_on_barge_in(env):
     assert speak["stream"] is True and speak["audio_mp3_base64"] is None
     await asyncio.sleep(0.05)
     assert [d["seq"] for e, d in events if e == "audio"] == [0]  # the first chunk went out at once
-    await rt.vad("Sarah", True)  # a human starts talking over Tensor
+    await rt.vad("Sarah", True)  # talking over Tensor doesn't stop the stream...
+    await rt.on_speech("Sarah", "hold on", final=False)  # ...asking it to stop does
     gate.set()
     await asyncio.sleep(0.2)
     assert ("stop_audio" in [e for e, _ in events]) and len([1 for e, _ in events if e == "audio"]) == 1
@@ -567,3 +546,44 @@ def test_writer_route():
         assert route(q) == "writer", q
     assert route("draft an email to David with the minutes") == "email"
     assert route("summarize the meeting") is None
+
+
+
+async def test_a_request_split_by_pauses_runs_once_the_speaker_has_finished(env):
+    rt, _, _, brain, _, _ = env
+    rt.settle = 0.3
+    await rt.on_utterance("Vyshnav", "Hey Tensor, compile a short summary of", "voice")
+    await rt.vad("Vyshnav", True)
+    await asyncio.sleep(0.5)
+    assert brain.calls == []  # still talking
+    await rt.on_utterance("Vyshnav", "what everyone has worked on so far", "voice")
+    await rt.vad("Vyshnav", False)
+    for _ in range(20):
+        await asyncio.sleep(0.1)
+    assert brain.calls == ["compile a short summary of what everyone has worked on so far"]
+
+
+async def test_email_edits_keep_the_greeting_closing_and_byline(env):
+    _, store, actions, _, _, _ = env
+    people = [dict(key="david", name="David Mathew", email="david@acme.example")]
+    card = await actions.draft_email("m-1", "Vyshnav", ["David"], [], "Tickets", "Here are the new tickets: SEC-401, SEC-402.", [], people)
+    body = card["payload"]["body"]
+    assert body.startswith("Hi David,") and "Best regards,\nVyshnav" in body and body.endswith("Sent via Tensor on behalf of Vyshnav")
+    card = await actions.update_email("m-1", card["card_id"], "Vyshnav", body="Dear David,\n\nPlease find the tickets SEC-401 and SEC-402.\n\nKind regards,\nVyshnav")
+    edited = card["payload"]["body"]
+    assert edited.startswith("Dear David,") and edited.count("regards") == 1 and edited.count("Sent via Tensor") == 1
+
+
+async def test_memory_keeps_requests_and_participation(env):
+    rt, store, _, _, _, _ = env
+    await store.join("m-1", "Vyshnav")
+    await rt.on_speech("Vyshnav", "We need to fix transcription before the demo.", final=True)
+    await rt.on_chat("Vyshnav", "@Tensor what was our payment success rate yesterday?")
+    context = await rt.context([])
+    assert "Participation so far (whole meeting): Vyshnav 1 turns, 100% of words" in context
+    assert "Vyshnav asked: what was our payment success rate yesterday? -> Tensor: Payment success rate was 98.9 percent." in context
+    from app.memory import participation
+    people = (await participation(store, rt.actions, "m-1", None))["people"]
+    assert people[0]["name"] == "Vyshnav" and people[0]["speaking"]["turns"] == 1 and people[0]["chat_messages"] == 1
+    await rt.end("Vyshnav")
+    assert await store.memory("m-1") == {}  # ending the meeting forgets it

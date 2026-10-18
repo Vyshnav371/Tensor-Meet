@@ -42,6 +42,9 @@ export class Room {
   readonly peerStates = signal<Record<string, PeerState>>({});
   readonly presence = signal<Record<string, { speaking?: boolean; mic?: boolean }>>({});
   readonly audioBlocked = signal(false);
+  /** True for a moment when Tensor wakes up ("Hey Tensor"): the orb ripples and a chime plays instead of speech. */
+  readonly waking = signal(false);
+  private wakingTimer?: ReturnType<typeof setTimeout>;
   /** Set when an admin ends the meeting for everyone. */
   readonly ended = signal<{ by: string } | null>(null);
 
@@ -162,7 +165,7 @@ export class Room {
         break;
       }
       case 'tensor':
-        if (data.status === 'listening' && this.tensor().status !== 'listening' && this.voiceOn()) this.voice.chime();
+        if (data.status === 'listening' && this.tensor().status !== 'listening') this.wakeUp();
         this.tensor.set(data);
         break;
       case 'participants':
@@ -211,6 +214,15 @@ export class Room {
         this.stopPlayback();
         break;
     }
+  }
+
+  /** Wake-up feedback: a soft chime (when Tensor's voice is on here) and a ripple on the orb. */
+  private wakeUp() {
+    if (this.voiceOn()) this.voice.chime();
+    clearTimeout(this.wakingTimer);
+    this.waking.set(false);
+    queueMicrotask(() => this.waking.set(true)); // restart the animation if it was still running
+    this.wakingTimer = setTimeout(() => this.waking.set(false), 1600);
   }
 
   // ---- other participants' voices -----------------------------------------------------
@@ -367,7 +379,7 @@ export class Room {
 
   private setSpeaking(speaking: boolean) {
     this.localSpeaking.set(speaking);
-    if (speaking) this.stopPlayback(); // barge-in on this device; the server stops everyone else
+    // Talking over Tensor doesn't cut it off: it finishes unless someone says "stop" (the server sends stop_audio).
     this.send({ type: 'vad', speaking });
   }
 

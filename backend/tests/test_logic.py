@@ -163,3 +163,13 @@ def test_action_questions_are_answered_from_the_action_center():
         dict(title="B", assignee="Rahul", priority="Low", story_points=1, include=False),
         dict(title="C", assignee="David", priority="Medium", story_points=3, include=True)]))
     assert [(t["key"], t["title"]) for t in ticket_list(card)] == [("SEC-403", "A"), ("SEC-404", "C")]  # excluded tasks get no key
+
+
+
+def test_stop_phrases():
+    from app.wake import is_stop
+
+    for text in ("stop", "Tensor, stop", "hold on", "okay thanks", "thank you Tensor that's enough", "Hey Tensor, be quiet"):
+        assert is_stop(text), text
+    for text in ("we should stop the rollout until the fix lands", "the pause button in the app is broken again today", "next steps"):
+        assert not is_stop(text), text

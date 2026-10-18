@@ -42,14 +42,15 @@ Tensor closes this gap. It brings the context into the meeting and does the foll
 - Tensor wakes on **"Hey Tensor"** or a directly addressed **"Tensor"**. Punctuation such as "Hey, tensor." is accepted, along with common speech-recognition variants including "Tenser", "Tensar", "Tenzor", "ten sir", and the greeting "hey dancer". Typing **`@Tensor`** in the chat does the same thing in text.
 - Say only the wake phrase and Tensor acknowledges **"I'm here. Go ahead."**, then waits up to **20 seconds** for that speaker's question. Repeating the name refreshes the window without repeating the greeting. The acknowledgement also appears in chat; spoken feedback waits for a quiet room and never plays late over a question or answer.
 - After it answers, Tensor keeps listening for 2 minutes for follow-ups, so you can say *"change the first one to highest priority"* or *"send it"* without repeating the wake word.
-- If someone starts talking while Tensor is speaking, it stops at once (barge-in).
+- **Tensor finishes its sentence.** People talking over it don't cut it off. Saying *"stop"*, *"Tensor, stop"*, *"hold on"* or *"that's enough"* does, while a longer sentence that merely contains "stop" doesn't.
+- **It waits for you to finish.** Speech recognition splits a long request at every pause, so Tensor joins the pieces and acts once the speaker has been quiet for 1.5 seconds.
 - **Two recognizers per microphone.**
   - **Chirp 3** writes the transcript and hears the commands. It's boosted with each company's own names and meeting vocabulary.
   - A **fast model** (`latest_long`) drives the live captions and the instant "listening" reaction.
   - On noisy Indian- and US-English test speech, Chirp 3 got 0.5% of words wrong, against 4.6% for the fast model alone.
   - If Chirp 3 fails, the fast model's text is used.
 - **Tensor knows the meeting itself.** It knows who is here, who has left, the speaker-labelled transcript and the last 30 chat messages. So it answers "who's in the meeting?", "what did Sarah post in the chat?" or "recap the decisions so far" directly.
-- **A soft chime** plays the moment Tensor hears its name.
+- **Waking up is silent.** When Tensor hears its name, it doesn't speak or post anything. It plays a soft chime (if Tensor's voice is on in that browser), ripples its orb and shows "I'm listening…", then waits for your request.
 - **Tensor's voice is streamed.** Its first words play about a second after the answer is ready, while the rest is still being generated. Admins choose the voice on the Company page, with previews:
   - Gemini voices (default: Achird) sound most natural;
   - Chirp 3 HD voices start fastest.
@@ -58,6 +59,10 @@ Tensor closes this gap. It brings the context into the meeting and does the foll
   - The result appears as a card in the Action center, and in the chat, with **Word (.docx)** and **Markdown** downloads.
   - Minutes have fixed sections: summary, discussion, decisions, an action-item table with owners and ticket keys, and open questions.
   - When an admin ends a meeting, Tensor writes the final minutes before the transcript is deleted, and offers them on the "meeting ended" screen.
+- **Meeting memory.** Before transcript lines leave the 15-minute window, Tensor turns them into a short summary with speaker names. It also keeps per-person participation counts and a log of earlier requests and answers, so follow-ups like *"what did I ask you earlier?"* or *"same for last month"* work. All of this is deleted when the meeting ends.
+- **Contribution summaries, with evidence.** *"Summarize what each attendee has contributed"* gives each person's speaking turns, points made, chat messages, files shared, and the tickets and actions they own (this meeting and earlier ones). Tensor does not rate anyone's "potential" or rank colleagues, because meeting data can't support that.
+- **Emails keep their shape.** Every email has a greeting, a closing with the requester's name, and the "Sent via Tensor" line, enforced in code. Edits like *"make it more formal"* start from the full current draft and change only what was asked.
+- **One system prompt for every agent:** shared rules on accuracy, meeting manners, memory, fairness about people, and untrusted documents.
 - **Tensor knows what was done.** It knows every ticket (key and title), email and document in the Action center. It can also look up actions from earlier meetings in the audit log, so *"what was the last ticket?"* or *"what is SEC-404 about?"* get real answers.
 - **Answers stream.** Tensor starts speaking as soon as its one-line summary is written and its numbers have been checked. The detailed answer then fills into the chat as it's written.
 - **Admins can end a meeting for everyone.** This stops Tensor and any answer in progress, cancels open drafts, deletes the live transcript and disconnects everyone. Chat stays for reference. Joining the same meeting ID later starts it again.

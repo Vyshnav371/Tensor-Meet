@@ -10,6 +10,7 @@ import time
 
 from . import etiquette, wake
 from .actions import REVIEWABLE, Actions, ticket_list
+from .memory import MeetingMemory
 from .store import MeetingStore
 
 log = logging.getLogger(__name__)
@@ -18,12 +19,22 @@ HUMAN_ACTIVE_SECONDS = 1.5  # someone spoke this recently -> "humans are talking
 FOLLOWUP_SECONDS = 120  # card edits/approvals without the wake word, after Tensor drafted or edited a card
 EMPTY_WAKE_SECONDS = 20  # "Hey Tensor" ... pause ... "what's our SLA?" from the same speaker
 WAKE_PROMPT = "I'm here. Go ahead."
+COMMAND_SETTLE_SECONDS = 1.5  # a spoken request is complete once its speaker has been quiet this long
+COMMAND_MAX_SECONDS = 45
+COMPACT_EVERY_SECONDS = 60
 AUDIO_CHUNK = 9600  # 0.2 s of 24 kHz PCM per socket message
 
 
 class MeetingRuntime:
-    def __init__(self, meeting_id: str, store: MeetingStore, brain, actions: Actions, voice=None, speech_factory=None, company=None):
+    def __init__(self, meeting_id: str, store: MeetingStore, brain, actions: Actions, voice=None, speech_factory=None, company=None,
+                 settle: float = COMMAND_SETTLE_SECONDS):
         self.meeting_id = meeting_id
+        self.memory = MeetingMemory(store, meeting_id)
+        self.settle = settle  # 0 = act on each final segment at once (tests)
+        self.pending: dict | None = None  # a spoken request still being said: {participant, command, utterance, source, last, started}
+        self.last_quiet: dict[str, float] = {}
+        self.compacted_at = 0.0
+        self.compacting = False
         self.company = company  # async () -> company record (name, dataset, team, jira_key) for the brain
         self.store = store
         self.brain = brain
@@ -68,13 +79,19 @@ class MeetingRuntime:
             self.active_speakers.discard(participant)
         if speaking:
             self.voice_activity[participant] = time.time()
-            if time.time() < self.speaking_until:  # barge-in (FR-1.3): a human talks over Tensor
-                self.speaking_until = 0
-                self.speech_id += 1  # also stops the rest of a streamed reply
-                await self.store.emit(self.meeting_id, "stop_audio", dict(reason="barge_in", by=participant))
-                waiting = self.awaiting_command and time.time() < self.awaiting_command[1]
-                await self.store.set_tensor(self.meeting_id, status="listening" if waiting else "idle",
-                                            note=WAKE_PROMPT if waiting else f"Stopped speaking: {participant} started talking")
+        else:
+            self.last_quiet[participant] = time.time()
+
+    async def stop_speaking(self, by: str) -> None:
+        """Someone asked Tensor to stop: Tensor otherwise finishes what it's saying, even when people talk over it."""
+        if time.time() >= self.speaking_until:
+            return
+        self.speaking_until = 0
+        self.speech_id += 1  # also stops the rest of a streamed reply
+        await self.store.emit(self.meeting_id, "stop_audio", dict(reason="asked_to_stop", by=by))
+        waiting = self.awaiting_command and time.time() < self.awaiting_command[1]
+        await self.store.set_tensor(self.meeting_id, status="listening" if waiting else "idle",
+                                    note=WAKE_PROMPT if waiting else f"Stopped: {by} asked Tensor to stop")
 
     async def wake_hint(self, participant: str) -> None:
         """Instant 'Listening' feedback from the browser's local recognizer; commands still come from the server transcript."""
@@ -90,6 +107,11 @@ class MeetingRuntime:
     # ---- speech results ------------------------------------------------------------------
 
     async def on_speech(self, participant: str, text: str, final: bool) -> None:
+        if time.time() < self.speaking_until and wake.is_stop(text):
+            await self.stop_speaking(participant)
+            if final:
+                await self.store.add_transcript(self.meeting_id, participant, text)
+            return
         if not final:
             await self.store.interim_text(self.meeting_id, participant, text)
             if wake.detect_wake(text) and time.time() - self.listening_since > 10 and not self.lock.locked():
@@ -97,6 +119,9 @@ class MeetingRuntime:
                 await self.store.set_tensor(self.meeting_id, status="listening", by=participant)
             return
         await self.store.add_transcript(self.meeting_id, participant, text)
+        await self.memory.count(participant, text)
+        if time.time() - self.compacted_at > COMPACT_EVERY_SECONDS:
+            asyncio.create_task(self.compact())
         await self.on_utterance(participant, text, source="voice")
 
     async def on_chat(self, participant: str, text: str) -> None:
@@ -106,6 +131,13 @@ class MeetingRuntime:
             await self.on_utterance(participant, f"Hey Tensor {command}", source="chat")
 
     async def on_utterance(self, participant: str, text: str, source: str) -> None:
+        if self.pending and self.pending["participant"] == participant and source != "chat":
+            more = wake.detect_wake(text)  # the request continues ("...and also check last month")
+            addition = more.command if more and more.command else text
+            self.pending["command"] = f"{self.pending['command']} {addition}".strip()
+            self.pending["utterance"] = f"{self.pending['utterance']} {text}".strip()
+            self.pending["last"] = time.time()
+            return
         if self.awaiting_command and time.time() >= self.awaiting_command[1]:
             await self._expire_wake(self.awaiting_command)
         tensor = await self.store.tensor(self.meeting_id)
@@ -122,26 +154,49 @@ class MeetingRuntime:
                     return  # a repeated name must not overwrite an in-progress request's state
                 repeated = self.awaiting_command is not None and self.awaiting_command[0] == participant
                 if not repeated:
-                    self.wake_session += 1
+                    self.wake_session += 1  # Tensor doesn't speak or post anything: the app plays a chime and animates the orb
                 if self.wake_timeout:
                     self.wake_timeout.cancel()
                 waiting = self.awaiting_command = (participant, time.time() + EMPTY_WAKE_SECONDS)
                 self.wake_timeout = asyncio.get_running_loop().call_later(
                     EMPTY_WAKE_SECONDS, lambda: asyncio.create_task(self._expire_wake(waiting)))
-                session = self.wake_session
                 self.listening_since = time.time()
                 await self.store.set_tensor(self.meeting_id, status="listening", by=participant,
                                             awaiting_command=True, note=WAKE_PROMPT, command=None)
-                if not repeated:
-                    await self.store.post_chat(self.meeting_id, "Tensor", WAKE_PROMPT, kind="system")
-                    await self._acknowledge_wake(participant, session)
                 return
             self._clear_wake()
             self.listening_since = time.time()
-            await self.command(participant, match.command, source, utterance=text)
+            await self.queue_command(participant, match.command, source, utterance=text)
             return
         if time.time() < self.followup_until and wake.is_card_followup(text) and await self.pending_cards():
-            await self.command(participant, text, source, utterance=text, followup=True)
+            await self.queue_command(participant, text, source, utterance=text, followup=True)
+
+    async def queue_command(self, participant: str, command: str, source: str, utterance: str, followup: bool = False) -> None:
+        """Spoken requests run once their speaker has finished: speech recognition splits a long request at every
+        pause, so later segments from the same person are appended until they've been quiet for `settle` seconds."""
+        if source == "chat" or self.settle <= 0:
+            await self.command(participant, command, source, utterance=utterance, followup=followup)
+            return
+        if self.pending and self.pending["participant"] != participant:
+            earlier, self.pending = self.pending, None  # someone else's request is complete: run it now
+            asyncio.create_task(self.command(earlier["participant"], earlier["command"], earlier["source"], earlier["utterance"], earlier["followup"]))
+        now = time.time()
+        self.pending = dict(participant=participant, command=command, utterance=utterance, source=source, followup=followup,
+                            last=now, started=now)
+        await self.store.set_tensor(self.meeting_id, status="listening", by=participant, awaiting_command=False)
+        asyncio.create_task(self._run_when_settled(self.pending))
+
+    async def _run_when_settled(self, pending: dict) -> None:
+        while self.pending is pending:
+            await asyncio.sleep(0.25)
+            now = time.time()
+            talking = pending["participant"] in self.active_speakers
+            quiet_for = now - max(pending["last"], self.last_quiet.get(pending["participant"], 0))
+            if (not talking and quiet_for >= self.settle) or now - pending["started"] > COMMAND_MAX_SECONDS:
+                if self.pending is pending:
+                    self.pending = None
+                    await self.command(pending["participant"], pending["command"], pending["source"], pending["utterance"], pending["followup"])
+                return
 
     def _clear_wake(self) -> None:
         self.awaiting_command = None
@@ -160,22 +215,6 @@ class MeetingRuntime:
             changes.update(status="idle", note=None)
         await self.store.set_tensor(self.meeting_id, **changes)
 
-    async def _acknowledge_wake(self, participant: str, session: int) -> None:
-        """A brief acknowledgement, while remaining ready for the caller's next segment."""
-        if self.humans_speaking(exclude=participant):
-            return  # the visual/chat acknowledgement is enough while another person is talking
-        sid = self._next_speech()
-        job = await self._prepare(WAKE_PROMPT)
-        waiting = self.awaiting_command
-        if (session != self.wake_session or not waiting or waiting[0] != participant or sid != self.speech_id
-                or time.time() >= waiting[1] or self.lock.locked() or self.active_speakers
-                or self.humans_speaking(exclude=participant)):
-            _cancel(job)
-            return  # don't play a late greeting over the answer or a different participant
-        seconds = etiquette.spoken_seconds(WAKE_PROMPT)
-        self.speaking_until = time.time() + seconds + 1.5
-        await self._emit_speech(WAKE_PROMPT, seconds, sid, job)
-
     # ---- commands --------------------------------------------------------------------------
 
     async def pending_cards(self) -> list[dict]:
@@ -192,7 +231,9 @@ class MeetingRuntime:
             approval, cancel = wake.is_approval(utterance), wake.is_cancel(utterance)
             # Pure approval / cancel of a pending card needs no model: decided in code from the human's words.
             if pending and (approval or cancel) and not wake.EDIT.search(_strip_approval(utterance)):
-                await self.resolve_cards(participant, select_cards(pending, utterance), approve=approval, channel=f"{source}:{participant}")
+                chosen = select_cards(pending, utterance)
+                await self.resolve_cards(participant, chosen, approve=approval, channel=f"{source}:{participant}")
+                await self.memory.remember(participant, utterance, f"{'Approved' if approval else 'Cancelled'} {len(chosen)} draft card(s).")
                 return
             await self.store.set_tensor(self.meeting_id, status="thinking", by=participant, command=command, awaiting_command=False)
             live = LiveAnswer(self, participant, source)
@@ -207,6 +248,7 @@ class MeetingRuntime:
                 await self.store.set_tensor(self.meeting_id, status="idle")
                 await self.store.post_chat(self.meeting_id, "Tensor", f"Sorry, I hit an error: {type(exc).__name__}. Please try again.", kind="system")
                 return
+            await self.memory.remember(participant, command, result.spoken, result.details, result.tools)
             touched = list(dict.fromkeys(result.cards_created + result.cards_updated))
             if touched:
                 self.followup_until = time.time() + FOLLOWUP_SECONDS
@@ -251,6 +293,7 @@ class MeetingRuntime:
 
     async def context(self, pending: list[dict]) -> str:
         transcript = await self.store.transcript(self.meeting_id)
+        await self.memory.load()
         chat = [m for m in await self.store.chat(self.meeting_id) if m.get("kind") != "system"][-30:]
         docs = await self.store.documents(self.meeting_id)
         people = await self.store.participants(self.meeting_id)
@@ -260,8 +303,9 @@ class MeetingRuntime:
         from datetime import datetime, timezone
         lines = [f"Meeting: {meeting} ({len(here)} people connected, plus Tensor). Today is {datetime.now(timezone.utc):%A %d %B %Y} (UTC).",
                  "In the meeting now: " + (", ".join(here) or "nobody"),
-                 "Joined earlier but left: " + (", ".join(left) or "nobody"),
-                 "Recent meeting transcript (oldest first, speaker-labelled):"]
+                 "Joined earlier but left: " + (", ".join(left) or "nobody")]
+        lines += self.memory.context_lines()
+        lines.append("Recent meeting transcript (last 15 minutes, oldest first, speaker-labelled):")
         lines += [f"- {s['speaker']}: {s['text']}" for s in transcript[-60:]] or ["- (none)"]
         lines.append("Meeting chat (oldest first):")
         lines += [f"- {m['author']}: {m['text'][:600]}" for m in chat] or ["- (none)"]
@@ -274,7 +318,9 @@ class MeetingRuntime:
                     tasks = "; ".join(f"#{t['temp_id']} {t['title']} ({t['priority']}, {t['story_points']} pts, {t['assignee']})" for t in p["proposed_tasks"])
                     lines.append(f"- {c['card_id']} JIRA_TASK_PLAN {p['project_key']}: {tasks}")
                 else:
-                    lines.append(f"- {c['card_id']} EMAIL_DRAFT to {', '.join(x['name'] for x in p['to'])}: {p['subject']}")
+                    cc = f" cc {', '.join(x['name'] for x in p['cc'])}" if p.get("cc") else ""
+                    lines.append(f"- {c['card_id']} EMAIL_DRAFT to {', '.join(x['name'] for x in p['to'])}{cc}, subject: {p['subject']}\n"
+                                 f"  Current body (edit THIS text, keep what wasn't asked to change):\n  " + p["body"][:2500].replace("\n", "\n  "))
         done = [c for c in await self.store.cards(self.meeting_id) if c["status"] not in REVIEWABLE]
         if done:
             lines.append("Actions already decided in this meeting (Action center), oldest first:")
@@ -403,6 +449,28 @@ class MeetingRuntime:
             cut = len(buf) - len(buf) % 2
             await self.store.emit(self.meeting_id, "audio", dict(id=sid, seq=seq, pcm=base64.b64encode(buf[:cut]).decode(), end=True))
 
+    # ---- memory ---------------------------------------------------------------------------------------
+
+    async def compact(self) -> None:
+        """Before transcript lines leave the 15-minute window, keep their substance as attributed summary bullets."""
+        if self.compacting:
+            return
+        self.compacting, self.compacted_at = True, time.time()
+        try:
+            expired = await self.store.expired_transcript(self.meeting_id)
+            if not expired:
+                return
+            if self.brain and hasattr(self.brain, "summarize"):
+                try:
+                    state = await self.memory.load()
+                    text = "\n".join(f"{s['speaker']}: {s['text']}" for s in expired)
+                    await self.memory.add_summary(await self.brain.summarize(text, state["summary"]))
+                except Exception:
+                    log.exception("meeting memory summary failed")
+            await self.store.delete_segments(self.meeting_id, [s["id"] for s in expired])  # verbatim text never outlives the window
+        finally:
+            self.compacting = False
+
     # ---- ending the meeting ------------------------------------------------------------------------
 
     async def end(self, by: str) -> None:
@@ -420,7 +488,9 @@ class MeetingRuntime:
                 await self.actions.cancel(self.meeting_id, card["card_id"], f"{by} (meeting ended)")
             except ValueError:
                 pass
+        self.pending = None
         await self.store.clear_transcript(self.meeting_id)
+        await self.memory.clear()
         await self.store.set_tensor(self.meeting_id, status="idle", hand=None, awaiting_command=False, note=None, text=None)
         await self.store.end_meeting(self.meeting_id, by)
         await self.store.emit(self.meeting_id, "stop_audio", dict(reason="meeting_ended", by=by))

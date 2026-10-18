@@ -53,6 +53,18 @@ def is_card_followup(text: str) -> bool:
     return bool(APPROVE.search(text) or CANCEL.search(text) or EDIT.search(text))
 
 
+STOP = re.compile(r"\b(stop|stop talking|that'?s enough|enough|hold on|hang on|pause|quiet|be quiet|shut up|cancel that|"
+                  r"never ?mind|ok(?:ay)? thanks?|thanks?,? tensor|thank you,? tensor)\b", re.I)
+
+
+def is_stop(text: str) -> bool:
+    """Someone asking Tensor to stop talking: a short stop phrase, or one addressed to Tensor ("Tensor, stop").
+    Longer sentences that merely contain "stop" ("we should stop the rollout") don't count."""
+    if not STOP.search(text):
+        return False
+    return len(re.findall(r"[\w']+", text)) <= 5 or bool(re.search(_TENSOR, text, re.I))
+
+
 def chat_mention(text: str) -> str | None:
     m = re.match(r"^\s*@tensor\b[\s,:]*", text, re.I)
     return text[m.end():].strip() if m else None
