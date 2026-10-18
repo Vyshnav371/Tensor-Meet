@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Q4 Architecture Spec: Payments API v3</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #222; margin: 28px; }
+  h1 { font-size: 20pt; margin-bottom: 2px; }
+  h2 { font-size: 13pt; margin-top: 22px; border-bottom: 1px solid #999; padding-bottom: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 1px solid #777; padding: 5px 7px; text-align: left; vertical-align: top; }
+  th { background: #e8e8e8; }
+  .meta { color: #555; }
+</style>
+</head>
+<body>
+<h1>Q4 Architecture Spec: Payments API v3</h1>
+<p class="meta">Prepared by: Platform team (Rahul Verma) · Vendor partner: FastPay Gateway Ltd · Draft 0.9 · 9 October 2026 · Confidential</p>
+
+<h2>1. Overview</h2>
+<p>Payments API v3 replaces the v2 gateway for card and UPI payments. It moves partner traffic to the new API gateway, adds the FastPay Gateway processor for UPI, and consolidates logging into a single pipeline. Target launch: 15 December 2026.</p>
+
+<h2>2. Authentication and authorization</h2>
+<ul>
+<li>All partners authenticate with OAuth 2.0 client credentials issued by the Acme auth service.</li>
+<li>Access tokens expire after 60 minutes. Refresh tokens rotate on every use.</li>
+<li>Internal services use Workload Identity; no static keys in production.</li>
+</ul>
+
+<h2>3. Network and transport security</h2>
+<table>
+<tr><th>Endpoint</th><th>Consumers</th><th>Protocol</th><th>Notes</th></tr>
+<tr><td>api.acme.in/v3/payments</td><td>Mobile apps, web</td><td>TLS 1.3</td><td>Public, behind API gateway</td></tr>
+<tr><td>partners.acme.in/v3</td><td>Partner banks</td><td>TLS 1.2+</td><td>Mutual TLS required</td></tr>
+<tr><td>legacy-settle.acme.in</td><td>Two legacy settlement partners</td><td>TLS 1.1</td><td>Kept enabled until partners upgrade (no date agreed)</td></tr>
+<tr><td>Internal service mesh</td><td>Internal services</td><td>mTLS (TLS 1.3)</td><td>Managed by service mesh</td></tr>
+</table>
+
+<h2>4. API protection</h2>
+<ul>
+<li>Per-client token-bucket rate limiting at the gateway: 100 requests per second, burst 200; HTTP 429 with Retry-After.</li>
+<li>Request payloads limited to 1 MB.</li>
+</ul>
+
+<h2>5. Data storage and residency</h2>
+<ul>
+<li>Payment records in Cloud Spanner, asia-south1, encrypted with CMEK keys rotated every 90 days.</li>
+<li>Daily backups to asia-south2.</li>
+</ul>
+
+<h2>6. Logging and retention</h2>
+<table>
+<tr><th>Log type</th><th>Destination</th><th>Retention</th></tr>
+<tr><td>Application logs</td><td>Cloud Logging (default bucket)</td><td>30 days</td></tr>
+<tr><td>Security and access audit logs</td><td>Cloud Logging (default bucket)</td><td>30 days, to reduce storage cost</td></tr>
+<tr><td>Payment transaction ledger</td><td>Spanner + archival</td><td>8 years</td></tr>
+</table>
+
+<h2>7. Third-party vendor: FastPay Gateway Ltd (UPI processing)</h2>
+<table>
+<tr><th>Service level</th><th>FastPay commitment</th></tr>
+<tr><td>Monthly availability</td><td>99.5%</td></tr>
+<tr><td>Severity 1 response</td><td>Within 1 hour (business hours), 4 hours (nights and weekends)</td></tr>
+<tr><td>Severity 1 resolution</td><td>Within 8 hours</td></tr>
+<tr><td>Breach notification</td><td>Within 24 hours</td></tr>
+<tr><td>Service credits</td><td>5% of monthly fee below 99.5%</td></tr>
+<tr><td>Data location</td><td>Mumbai and Singapore data centres</td></tr>
+</table>
+
+<h2>8. Open items</h2>
+<ul>
+<li>Confirm decommission date for legacy-settle.acme.in.</li>
+<li>Finalize FastPay contract (legal review in progress).</li>
+<li>Load test at 1,000 requests per second before launch.</li>
+</ul>
+</body>
+</html>

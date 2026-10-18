@@ -1,0 +1,44 @@
+# --- Secrets (none are in the repo today; keep it that way) ---
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*credentials*.json
+*service-account*.json
+client_secret*.json
+application_default_credentials.json
+
+# --- Python ---
+backend/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-tmp*/
+.coverage
+htmlcov/
+
+# --- Angular / Node (rebuilt by `npm ci` and `npm run build`) ---
+node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/out-tsc/
+npm-debug.log*
+
+# --- AI agent / assistant files ---
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+frontend/.vscode/mcp.json
+
+# --- Editors and OS ---
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

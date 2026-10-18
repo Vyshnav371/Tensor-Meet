@@ -1,0 +1,721 @@
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Workspace navigation">
+    <div class="brand">
+      <span class="brand-mark"><tn-icon name="logo" /></span
+      ><span class="brand-word">tensor<span class="brand-period">.</span></span>
+    </div>
+    <div class="workspace-label">
+      <span class="workspace-avatar">{{ (auth.company()?.name ?? 'W').charAt(0) }}</span
+      ><span>{{ auth.company()?.name ?? 'Your workspace' }}<small>{{ auth.company()?.industry_label ?? 'A space to move work forward' }}</small></span>
+    </div>
+    <div class="nav-caption">IN THIS MEETING</div>
+    <nav>
+      @for (item of nav; track item.id) {
+        <button
+          class="nav-item"
+          [class.active]="view() === item.id"
+          (click)="view.set(item.id)"
+          [attr.aria-current]="view() === item.id ? 'page' : null"
+          [attr.title]="item.label"
+        >
+          <tn-icon [name]="item.icon" /><span>{{ item.label }}</span>
+          @if (item.id === 'actions' && room.pendingCount()) {
+            <span class="nav-count">{{ room.pendingCount() }}</span>
+          }
+          @if (item.id === 'files' && room.documents().length) {
+            <span class="nav-count neutral">{{ room.documents().length }}</span>
+          }
+          @if (item.id === 'overview') {
+            <span class="nav-live"></span>
+          }
+        </button>
+      }
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-note">
+        <span class="mini-icon green"><tn-icon name="sparkle" /></span
+        ><strong>A teammate, on your terms.</strong>
+        <p>Just say “Hey Tensor.”<br />A little help, right when you need it.</p>
+        <button (click)="showTips.set(true)">See what you can ask <tn-icon name="arrow" /></button>
+      </div>
+      <button class="sidebar-help" (click)="showTips.set(true)">
+        <tn-icon name="help" /><span>A little help getting started</span>
+      </button>
+      <div class="sidebar-profile">
+        <span class="avatar profile-avatar">{{ initials(room.me()) }}</span>
+        <div>
+          <strong>{{ room.me() }}</strong
+          ><small>{{ auth.user()?.role === 'admin' ? 'Admin' : 'Member' }} · {{ auth.company()?.name }}</small>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="breadcrumb">
+        <a routerLink="/company">{{ auth.company()?.name ?? 'Workspace' }}</a><tn-icon name="chevron" /><strong>Live meeting</strong>
+      </div>
+      <div class="topbar-right">
+        <span class="conn" [attr.data-state]="room.connection()"
+          ><span class="status-dot"></span
+          >{{ room.connection() === 'live' ? 'Connected' : room.connection() }}</span
+        ><span class="topbar-divider"></span><span class="local-label" title="Jira and email actions run in sandbox mode">SANDBOX ACTIONS</span
+        ><button
+          type="button"
+          class="theme-toggle"
+          role="switch"
+          aria-label="Dark mode"
+          [attr.aria-checked]="theme() === 'dark'"
+          (click)="toggleTheme()"
+        >
+          <tn-icon [name]="theme() === 'dark' ? 'moon' : 'sun'" />
+          <span class="theme-toggle-label">Dark mode</span>
+          <span class="theme-switch-track" [class.checked]="theme() === 'dark'"><span></span></span>
+        </button>
+      </div>
+    </header>
+    <div class="meeting-heading">
+      <div>
+        <div class="meeting-eyebrow">
+          <span class="status-dot" [class.inactive]="room.connection() !== 'live'"></span
+          >{{ room.connection() === 'live' ? 'LIVE SESSION' : 'CONNECTING TO SESSION'
+          }}<span class="eyebrow-separator">/</span
+          ><span class="duration"><tn-icon name="clock" />{{ duration() }}</span>
+        </div>
+        <h1>{{ meetingTitle() }}</h1>
+        <p>A little more context. A lot more momentum.</p>
+      </div>
+      <button class="secondary copy-link" (click)="copyLink()">
+        <tn-icon [name]="copied() ? 'check' : 'link'" />{{
+          copied() ? 'Link copied' : 'Copy meeting link'
+        }}
+      </button>
+    </div>
+    @if (room.audioBlocked()) {
+      <div class="toast" role="status">
+        <tn-icon name="volume" /><span>Click anywhere to hear the other participants.</span>
+      </div>
+    }
+    @if (room.error() || room.micError()) {
+      <div class="toast" role="alert">
+        <tn-icon name="help" /><span>{{ room.error() || 'Microphone: ' + room.micError() }}</span
+        ><button
+          class="icon"
+          (click)="room.error.set(''); room.micError.set('')"
+          aria-label="Dismiss notification"
+        >
+          <tn-icon name="close" />
+        </button>
+      </div>
+    }
+
+    <div class="meeting-layout">
+      <main class="meeting-main">
+        <div class="view-heading">
+          <div>
+            <tn-icon
+              [name]="
+                view() === 'overview'
+                  ? 'users'
+                  : view() === 'transcript'
+                    ? 'transcript'
+                    : view() === 'actions'
+                      ? 'checkSquare'
+                      : 'folder'
+              "
+            />
+            <h2>
+              {{
+                view() === 'overview'
+                  ? 'In the room'
+                  : view() === 'transcript'
+                    ? 'Live transcript'
+                    : view() === 'actions'
+                      ? 'Action center'
+                      : 'Shared files'
+              }}
+            </h2>
+            <span class="count-pill">{{
+              view() === 'overview'
+                ? people().length + 1
+                : view() === 'transcript'
+                  ? room.transcript().length
+                  : view() === 'actions'
+                    ? room.cards().length
+                    : room.documents().length
+            }}</span>
+          </div>
+          <span class="view-note">{{
+            view() === 'overview'
+              ? 'Present, together'
+              : view() === 'transcript'
+                ? 'The last 15 minutes'
+                : view() === 'actions'
+                  ? 'Your go-ahead makes it happen'
+                  : 'Context, shared with everyone'
+          }}</span>
+        </div>
+
+        <div class="main-scroll">
+          @if (view() === 'overview') {
+            <section class="participant-grid" aria-label="Meeting participants">
+              <article class="tensor-tile" [attr.data-status]="room.tensor().status">
+                <div class="tile-top">
+                  <span class="ai-label"><tn-icon name="sparkle" /> YOUR AI TEAMMATE</span
+                  ><span class="tile-state"
+                    ><span class="status-dot"></span
+                    >{{
+                      room.tensor().status === 'idle'
+                        ? 'Standby'
+                        : room.tensor().status === 'hand_raised'
+                          ? 'Hand raised'
+                          : room.tensor().status
+                    }}</span
+                  >
+                </div>
+                <div class="orb-stage">
+                  <div class="orb-halo"></div>
+                  <div
+                    class="tensor-orb"
+                    [attr.data-status]="room.tensor().status"
+                    aria-hidden="true"
+                  >
+                    <span></span><i></i><b></b>
+                  </div>
+                </div>
+                <div class="tensor-tile-info">
+                  <h3>Tensor <span>AI</span></h3>
+                  <p aria-live="polite">{{ statusLabel() }}</p>
+                </div>
+                <div class="tile-bottom">
+                  <span><span class="status-dot"></span> Say “Hey Tensor” to begin</span
+                  ><span class="mini-wave" [class.animated]="room.tensor().status !== 'idle'"
+                    ><i></i><i></i><i></i><i></i><i></i
+                  ></span>
+                </div>
+              </article>
+              @for (p of people(); track p.name) {
+                <article
+                  class="person-tile"
+                  [class.is-speaking]="room.isSpeaking(p.name)"
+                >
+                  <span class="person-mic"
+                    ><tn-icon [name]="(p.name === room.me() ? room.micOn() : room.presence()[p.name]?.mic) ? 'mic' : 'mic-off'"
+                  /></span>
+                  <div class="person-avatar">{{ initials(p.name) }}</div>
+                  <div class="person-tile-info">
+                    <strong
+                      >{{ p.name }}
+                      @if (p.name === room.me()) {
+                        <span>(you)</span>
+                      }</strong
+                    ><small>{{
+                      p.name === room.me()
+                        ? room.micOn()
+                          ? 'Microphone on'
+                          : 'Make yourself comfortable'
+                        : voiceLabel(p.name)
+                    }}</small>
+                  </div>
+                  @if (room.isSpeaking(p.name)) {
+                    <span class="speaking-label"><span class="status-dot"></span> Speaking</span>
+                  }
+                </article>
+              } @empty {
+                <article class="person-tile">
+                  <span class="person-mic"><tn-icon name="mic-off" /></span>
+                  <div class="person-avatar">{{ initials(room.me()) }}</div>
+                  <div class="person-tile-info">
+                    <strong>{{ room.me() }} <span>(you)</span></strong
+                    ><small>Connecting to your meeting…</small>
+                  </div>
+                </article>
+              }
+            </section>
+            <div class="meeting-controls">
+              <div class="control-group">
+                <button
+                  class="mic-control"
+                  [class.is-on]="room.micOn()"
+                  (click)="room.toggleMic()"
+                  [attr.aria-pressed]="room.micOn()"
+                >
+                  <tn-icon [name]="room.micOn() ? 'mic' : 'mic-off'" /><span>{{
+                    room.micOn() ? 'Mic on' : 'Turn on mic'
+                  }}</span></button
+                ><button
+                  class="voice-control"
+                  [class.is-on]="room.voiceOn()"
+                  (click)="toggleVoice()"
+                  [attr.aria-pressed]="room.voiceOn()"
+                  title="Turn off Tensor’s voice on extra devices in the same room"
+                >
+                  <tn-icon [name]="room.voiceOn() ? 'volume' : 'volume-off'" /><span
+                    >Tensor voice <small>{{ room.voiceOn() ? 'on' : 'off' }}</small></span
+                  >
+                </button>
+              </div>
+              @if (auth.isAdmin()) {
+              <button class="leave-control end-control" (click)="endMeeting()" title="End the meeting for everyone">
+                <tn-icon name="close" /><span>End for all</span>
+              </button>
+            }
+            <button class="leave-control" (click)="leave()">
+                <tn-icon name="leave" /><span>Leave</span>
+              </button>
+            </div>
+            <p class="transcription-note">
+              <tn-icon name="shield" />{{
+                room.micOn()
+                  ? 'Live transcription is on · Rolling 15-minute context'
+                  : 'Your microphone is off. Turn it on when you’re ready.'
+              }}
+            </p>
+          }
+
+          @if (hand(); as h) {
+            <section class="hand" role="status">
+              <div class="hand-icon"><tn-icon name="hand" /></div>
+              <div>
+                <strong>Tensor has a thought.</strong>
+                <p>{{ h.topic }}</p>
+                <div class="hand-actions">
+                  <button class="primary" (click)="handAction('speak')">
+                    Let Tensor speak <tn-icon name="volume" /></button
+                  ><button class="ghost" (click)="handAction('dismiss')">Read in chat</button>
+                </div>
+              </div>
+            </section>
+          }
+          @if (room.tensor().status === 'speaking' && room.caption()) {
+            <p class="caption"><tn-icon name="volume" />“{{ room.caption() }}”</p>
+          }
+
+          @if (view() === 'overview' && room.pendingCount()) {
+            <button class="pending-banner" (click)="view.set('actions')">
+              <span class="mini-icon green"><tn-icon name="checkSquare" /></span
+              ><span
+                ><strong
+                  >{{ room.pendingCount() }}
+                  {{ room.pendingCount() === 1 ? 'action needs' : 'actions need' }} your
+                  go-ahead</strong
+                ><small>Review what Tensor has prepared for you.</small></span
+              ><tn-icon name="arrow" />
+            </button>
+          }
+
+          @if (view() === 'overview' || view() === 'transcript') {
+            <section class="transcript" [class.full-transcript]="view() === 'transcript'">
+              @if (view() === 'overview') {
+                <div class="section-heading">
+                  <h2>
+                    <tn-icon name="transcript" /> Live transcript <span class="live-dot"></span>
+                  </h2>
+                  <button class="text-button" (click)="view.set('transcript')">
+                    View all <tn-icon name="arrow" />
+                  </button>
+                </div>
+              }
+              <div
+                class="transcript-list"
+                #transcriptList
+                aria-live="polite"
+                aria-relevant="additions text"
+              >
+                @for (s of visibleTranscript(); track s.id) {
+                  <div class="transcript-entry">
+                    <span
+                      class="avatar transcript-avatar"
+                      [class.ai-avatar]="s.speaker === 'Tensor'"
+                      >{{ initials(s.speaker) }}</span
+                    >
+                    <div>
+                      <div class="entry-meta">
+                        <strong>{{ s.speaker }}</strong
+                        ><time>{{ time(s.ts) }}</time>
+                      </div>
+                      <p>{{ s.text }}</p>
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="empty-state transcript-empty">
+                    <span class="empty-symbol"><tn-icon name="transcript" /></span>
+                    <h3>The conversation starts with you.</h3>
+                    <p>
+                      Turn on your mic and settle in.<br />Your live transcript will appear here.
+                    </p>
+                    <span class="empty-footnote">All the context. None of the note-taking.</span>
+                  </div>
+                }
+                @for (e of interimEntries(); track e[0]) {
+                  <div class="transcript-entry interim">
+                    <span class="avatar transcript-avatar">{{ initials(e[0]) }}</span>
+                    <div>
+                      <div class="entry-meta">
+                        <strong>{{ e[0] }}</strong
+                        ><span class="mini-wave animated"><i></i><i></i><i></i></span>
+                      </div>
+                      <p>{{ e[1] }}…</p>
+                    </div>
+                  </div>
+                }
+              </div>
+            </section>
+          }
+
+          @if (view() === 'actions') {
+            <div class="action-toolbar">
+              <span class="muted">Drafts wait for your approval. Documents are ready to download.</span>
+              <button class="secondary" (click)="minutes()" [disabled]="writingMinutes() || room.connection() !== 'live'">
+                <tn-icon name="file" />{{ writingMinutes() ? 'Writing minutes…' : 'Meeting minutes' }}
+              </button>
+            </div>
+            <div class="action-list">
+              @for (c of room.cards(); track c.card_id) {
+                <tn-action-card [card]="c" />
+              } @empty {
+                <div class="empty-state page-empty">
+                  <span class="empty-symbol"><tn-icon name="checkSquare" /></span>
+                  <h3>Good ideas deserve a next step.</h3>
+                  <p>
+                    Ask Tensor to turn the conversation into Jira tasks<br />or draft a follow-up
+                    email. Review it all right here.
+                  </p>
+                  <button class="secondary" (click)="useExample(examples[1].text)">
+                    Plan the next steps <tn-icon name="arrow" /></button
+                  ><span class="empty-footnote"
+                    ><tn-icon name="shield" /> Nothing happens without your approval.</span
+                  >
+                </div>
+              }
+            </div>
+          }
+
+          @if (view() === 'files') {
+            <section
+              class="files-panel"
+              [class.dragging]="dragging()"
+              (dragover)="$event.preventDefault(); dragging.set(true)"
+              (dragleave)="onDragLeave($event)"
+              (drop)="onDrop($event)"
+            >
+              <label class="file-drop" [class.disabled]="uploading()"
+                ><input
+                  type="file"
+                  accept="application/pdf"
+                  (change)="onPick($event)"
+                  [disabled]="uploading()"
+                /><span class="empty-symbol"><tn-icon name="folder" /></span
+                ><strong>{{
+                  uploading()
+                    ? 'Bringing your document in…'
+                    : 'Bring some context to the conversation.'
+                }}</strong>
+                <p>Drop a PDF here, or <span>browse files</span></p>
+                <small>PDF files up to 15 MB</small></label
+              >
+              @for (d of room.documents(); track d.id) {
+                <article class="document-row">
+                  <span class="document-icon"><tn-icon name="file" /></span>
+                  <div>
+                    <strong>{{ d.name }}</strong
+                    ><small
+                      >{{ d.uploaded_by ? 'Shared by ' + d.uploaded_by : 'Shared in this meeting'
+                      }}{{
+                        d.status === 'READY'
+                          ? ' · ' + (d.pages ?? 0) + ' pages · ' + (d.tables ?? 0) + ' tables'
+                          : ''
+                      }}</small
+                    >
+                    @if (d.error) {
+                      <small class="warn">{{ d.error }}</small>
+                    }
+                  </div>
+                  <span class="status-pill" [attr.data-status]="d.status">{{
+                    d.status === 'READY'
+                      ? 'Ready to explore'
+                      : d.status === 'FAILED'
+                        ? 'Couldn’t parse'
+                        : 'Reading…'
+                  }}</span>
+                </article>
+              }
+              <p class="files-hint">
+                <tn-icon name="sparkle" /> Tensor can answer questions about your PDFs and check
+                them against company knowledge.
+              </p>
+            </section>
+          }
+        </div>
+        @if (view() !== 'overview') {
+          <div class="meeting-controls persistent-controls">
+            <div class="control-group">
+              <button
+                class="mic-control"
+                [class.is-on]="room.micOn()"
+                (click)="room.toggleMic()"
+                [attr.aria-pressed]="room.micOn()"
+              >
+                <tn-icon [name]="room.micOn() ? 'mic' : 'mic-off'" /><span>{{
+                  room.micOn() ? 'Mic on' : 'Turn on mic'
+                }}</span></button
+              ><button
+                class="voice-control"
+                [class.is-on]="room.voiceOn()"
+                (click)="toggleVoice()"
+                [attr.aria-pressed]="room.voiceOn()"
+                title="Turn off Tensor’s voice on extra devices in the same room"
+              >
+                <tn-icon [name]="room.voiceOn() ? 'volume' : 'volume-off'" /><span
+                  >Tensor voice <small>{{ room.voiceOn() ? 'on' : 'off' }}</small></span
+                >
+              </button>
+            </div>
+            @if (auth.isAdmin()) {
+              <button class="leave-control end-control" (click)="endMeeting()" title="End the meeting for everyone">
+                <tn-icon name="close" /><span>End for all</span>
+              </button>
+            }
+            <button class="leave-control" (click)="leave()">
+              <tn-icon name="leave" /><span>Leave</span>
+            </button>
+          </div>
+        }
+        <div class="main-bottom-note">
+          <tn-icon name="sparkle" /><span>Present in the meeting. A step ahead on the work.</span
+          ><span class="bottom-mark">tensor.</span>
+        </div>
+      </main>
+
+      <aside
+        class="chat"
+        [class.dragging]="dragging()"
+        (dragover)="$event.preventDefault(); dragging.set(true)"
+        (dragleave)="onDragLeave($event)"
+        (drop)="onDrop($event)"
+        aria-label="Meeting chat"
+      >
+        <header class="chat-header">
+          <div>
+            <tn-icon name="chat" />
+            <h2>Meeting chat</h2>
+          </div>
+          <span class="count-pill">{{ room.chat().length }}</span>
+        </header>
+        <div class="chat-context">
+          <span class="tiny-spark"><tn-icon name="sparkle" /></span>
+          <p>Your conversation, with a little extra context.</p>
+        </div>
+        <div class="chat-list" #chatList aria-live="polite" aria-relevant="additions text">
+          @for (m of room.chat(); track m.id) {
+            <article class="msg" [attr.data-kind]="m.kind" [class.tensor]="m.author === 'Tensor'" [class.streaming]="m.streaming">
+              <span class="avatar message-avatar" [class.ai-avatar]="m.author === 'Tensor'">
+                @if (m.author === 'Tensor') {
+                  <tn-icon name="logo" />
+                } @else {
+                  {{ initials(m.author) }}
+                }
+              </span>
+              <div class="message-content">
+                <div class="msg-head">
+                  <strong>{{ m.author }}</strong>
+                  @if (m.author === 'Tensor') {
+                    <span class="ai-tag">AI</span>
+                  }
+                  <time>{{ time(m.ts) }}</time>
+                </div>
+                @if (m.delivery === 'HAND_RAISE') {
+                  <span class="delivery-tag"
+                    ><tn-icon name="hand" /> Shared without interrupting</span
+                  >
+                }
+                @if (m.kind === 'export' && m.attachment?.card_id) {
+                  <div class="file-message export-message">
+                    <span class="document-icon"><tn-icon name="file" /></span>
+                    <div>
+                      <strong>{{ m.attachment!.name }}</strong
+                      ><small
+                        >{{ m.attachment!.kind === 'minutes' ? 'Meeting minutes' : 'Document' }} ·
+                        <a [href]="room.exportUrl(m.attachment!.card_id!, 'docx')" download>Word</a> ·
+                        <a [href]="room.exportUrl(m.attachment!.card_id!, 'md')" download>Markdown</a></small
+                      >
+                    </div>
+                  </div>
+                } @else if (m.kind === 'file' && m.attachment) {
+                  @let d = docsById().get(m.attachment.doc_id ?? '');
+                  <div class="file-message">
+                    <span class="document-icon"><tn-icon name="file" /></span>
+                    <div>
+                      <strong>{{ m.attachment.name }}</strong
+                      ><small [class.warn]="d?.status === 'FAILED'">{{
+                        d?.status === 'READY'
+                          ? 'Ready · ' + d?.pages + ' pages · ' + d?.tables + ' tables'
+                          : d?.status === 'FAILED'
+                            ? 'Couldn’t parse document'
+                            : 'Reading your document…'
+                      }}</small>
+                    </div>
+                  </div>
+                } @else if (m.kind === 'markdown' || m.author === 'Tensor') {
+                  <div class="md" [innerHTML]="m.text | markdown"></div>
+                  @if (m.text.length > 400) {
+                    <button class="text-button expand" (click)="expanded.set(m.id)">
+                      <tn-icon name="expand" /> Open full answer
+                    </button>
+                  }
+                } @else {
+                  <p>{{ m.text }}</p>
+                }
+              </div>
+            </article>
+          } @empty {
+            <div class="chat-empty">
+              <span class="chat-empty-icon"
+                ><tn-icon name="chat" /><span><tn-icon name="sparkle" /></span
+              ></span>
+              <h3>A space for the<br />“one more thing.”</h3>
+              <p>Share a thought, drop a PDF, or ask<br />Tensor to connect the dots.</p>
+              <span class="chat-empty-divider"></span><small>A FEW WAYS TO GET STARTED</small>
+              <div class="quick-prompts">
+                @for (e of examples.slice(0, 3); track e.label) {
+                  <button (click)="useExample(e.text)">
+                    <tn-icon [name]="e.icon" /><span>{{ e.label }}</span
+                    ><tn-icon name="plus" />
+                  </button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+        @if (room.tensor().status === 'thinking') {
+          <div class="thinking-indicator">
+            <span class="typing-dots"><i></i><i></i><i></i></span> Tensor is connecting the dots
+          </div>
+        }
+        <div class="composer-wrap">
+          <form class="composer" (ngSubmit)="send()">
+            <input
+              #chatComposer
+              name="msg"
+              aria-label="Message the meeting"
+              [ngModel]="chatInput()"
+              (ngModelChange)="chatInput.set($event)"
+              placeholder="Share a thought. Ask @Tensor…"
+              maxlength="4000"
+              autocomplete="off"
+            />
+            <div class="composer-toolbar">
+              <label class="upload icon" [class.disabled]="uploading()" title="Share a PDF"
+                ><input
+                  type="file"
+                  accept="application/pdf"
+                  (change)="onPick($event)"
+                  [disabled]="uploading()"
+                  aria-label="Upload a PDF" /><tn-icon name="plus" /></label
+              ><button
+                class="mention-button"
+                type="button"
+                (click)="chatInput.set(chatInput() + '@Tensor '); chatComposer.focus()"
+                title="Mention Tensor"
+              >
+                &#64;<span>Tensor</span></button
+              ><span class="spacer"></span
+              ><button
+                class="send-button"
+                type="submit"
+                aria-label="Send message"
+                [disabled]="!chatInput().trim() || room.connection() !== 'live'"
+              >
+                <tn-icon name="arrow-up" />
+              </button>
+            </div>
+          </form>
+          <p class="composer-hint">
+            {{
+              uploading() ? 'Uploading your PDF…' : '↵ to send · Mention @Tensor for a little help'
+            }}
+          </p>
+        </div>
+        @if (dragging()) {
+          <div class="drop-overlay">
+            <tn-icon name="file" /><strong>Drop your PDF here</strong
+            ><span>A little context goes a long way.</span>
+          </div>
+        }
+      </aside>
+    </div>
+  </div>
+</div>
+
+@if (selectedMessage(); as m) {
+  <tn-dialog label="Tensor’s full answer" (closed)="expanded.set(null)"
+    ><header class="modal-header">
+      <span class="mini-icon green"><tn-icon name="logo" /></span>
+      <div>
+        <h2>A little more detail.</h2>
+        <small>Tensor · {{ time(m.ts) }}</small>
+      </div>
+      <button class="icon" (click)="expanded.set(null)" aria-label="Close full answer">
+        <tn-icon name="close" />
+      </button>
+    </header>
+    <div class="md wide" [innerHTML]="m.text | markdown"></div
+  ></tn-dialog>
+}
+@if (showTips()) {
+  <tn-dialog label="What you can ask Tensor" (closed)="showTips.set(false)"
+    ><header class="modal-header">
+      <span class="mini-icon green"><tn-icon name="sparkle" /></span>
+      <div>
+        <h2>Meet your new teammate.</h2>
+        <small>A little help, right in the conversation.</small>
+      </div>
+      <button class="icon" (click)="showTips.set(false)" aria-label="Close tips">
+        <tn-icon name="close" />
+      </button>
+    </header>
+    <div class="tips-content">
+      <p>
+        Say <strong>“Hey Tensor”</strong> with your mic on, or mention
+        <strong>&#64;Tensor</strong> in chat. Try one of these:
+      </p>
+      @for (e of examples; track e.label) {
+        <button class="example" (click)="useExample(e.text)">
+          <span class="mini-icon green"><tn-icon [name]="e.icon" /></span
+          ><span
+            ><strong>{{ e.label }}</strong
+            ><small>{{ e.text }}</small></span
+          ><tn-icon name="arrow" />
+        </button>
+      }
+      <p class="tips-note">
+        <tn-icon name="shield" /> Tensor keeps spoken answers brief, shares details in chat, and
+        waits for your approval before sending emails or creating tickets.
+      </p>
+    </div></tn-dialog
+  >
+}
+
+@if (room.ended(); as ended) {
+  <div class="ended-overlay" role="alertdialog" aria-labelledby="ended-title">
+    <section class="ended-card">
+      <span class="mini-icon green"><tn-icon name="checkSquare" /></span>
+      <h2 id="ended-title">This meeting has ended</h2>
+      <p>Ended by {{ ended.by }}. Tensor stopped, open drafts were cancelled and the live transcript was deleted. The chat stays for reference.</p>
+      @if (finalMinutes(); as fm) {
+        <div class="ended-minutes">
+          <tn-icon name="file" /><span>{{ fm.payload.title }}</span>
+          <a class="button primary" [href]="room.exportUrl(fm.card_id, 'docx')" download>Word</a>
+          <a class="button secondary" [href]="room.exportUrl(fm.card_id, 'md')" download>Markdown</a>
+        </div>
+      } @else if (minutesPending()) {
+        <p class="muted small">Tensor is writing the meeting minutes from the conversation…</p>
+      }
+      <div class="ended-actions">
+        <button class="primary" (click)="leave()">Back to start <tn-icon name="arrow" /></button>
+        <button class="secondary" (click)="rejoin()">Start it again</button>
+      </div>
+    </section>
+  </div>
+}

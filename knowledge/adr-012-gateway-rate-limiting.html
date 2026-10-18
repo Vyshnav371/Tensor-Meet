@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ADR-012: Per-client rate limiting at the API gateway</title></head>
+<body>
+<h1>ADR-012: Per-client rate limiting at the API gateway</h1>
+<p>Status: Accepted · Date: 3 May 2026 · Deciders: Rahul Verma, Priya Nair · Related: SEC-POL-001 SEC-3.1.</p>
+<h2>Context</h2>
+<p>A partner retry storm in April 2026 sent 4,800 requests per second to the ledger service and caused a 22-minute partial outage.</p>
+<h2>Decision</h2>
+<ul>
+<li>Token-bucket rate limiting per OAuth client ID at the API gateway: 100 requests per second sustained, burst 200.</li>
+<li>Limits are configurable per partner contract, never above 1,000 requests per second without load testing.</li>
+<li>Clients exceeding the limit receive HTTP 429 with a Retry-After header.</li>
+<li>Rate-limit decisions are exported as metrics and alert at 80% of the limit for 5 minutes.</li>
+</ul>
+<h2>Consequences</h2>
+<p>Redis-backed counters are required in each region. Middleware must be added to every public route before Q4 2026.</p>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data Retention and Deletion Policy (DATA-POL-002)</title></head>
+<body>
+<h1>Data Retention and Deletion Policy</h1>
+<p>Document ID: DATA-POL-002 · Owner: David Mathew · Version 1.6.</p>
+<table border="1">
+<tr><th>Data class</th><th>Retention</th><th>Deletion</th></tr>
+<tr><td>Transaction records</td><td>8 years (RBI requirement)</td><td>Archived to cold storage after 2 years</td></tr>
+<tr><td>Security and access audit logs</td><td>365 days minimum</td><td>Immutable bucket; automatic expiry after 400 days</td></tr>
+<tr><td>Application logs</td><td>90 days</td><td>Automatic expiry</td></tr>
+<tr><td>Meeting recordings and transcripts</td><td>30 days</td><td>Automatic deletion; never used for model training</td></tr>
+<tr><td>Customer KYC documents</td><td>5 years after account closure</td><td>Secure deletion with certificate</td></tr>
+</table>
+</body>
+</html>

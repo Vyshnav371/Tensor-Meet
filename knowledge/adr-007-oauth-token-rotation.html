@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ADR-007: OAuth 2.0 with refresh-token rotation for the API gateway</title></head>
+<body>
+<h1>ADR-007: OAuth 2.0 with refresh-token rotation for the API gateway</h1>
+<p>Status: Accepted · Date: 12 February 2026 · Deciders: David Mathew, Rahul Verma · Related: SEC-POL-001 section 2.</p>
+<h2>Context</h2>
+<p>The payments API gateway used long-lived static API keys for partner access. A leaked key in March 2025 allowed unauthorized reads for 11 days before detection.</p>
+<h2>Decision</h2>
+<ul>
+<li>All partner and internal clients authenticate with OAuth 2.0 (client credentials for services, authorization code with PKCE for apps).</li>
+<li>Access tokens expire after 60 minutes.</li>
+<li>Refresh tokens rotate on every use; reuse of an old refresh token revokes the whole token family.</li>
+<li>Token issuance and revocation events are written to the security audit log (365-day retention).</li>
+</ul>
+<h2>Consequences</h2>
+<p>Partners must update client libraries. The legacy static-key path is removed after 30 June 2026. Rotation adds roughly 2 ms per token refresh at the gateway.</p>
+</body>
+</html>

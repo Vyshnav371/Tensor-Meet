@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Incident Response Runbook (OPS-RUN-002)</title></head>
+<body>
+<h1>Incident Response Runbook</h1>
+<p>Document ID: OPS-RUN-002 · Owner: Sarah Iyer · Version 3.1.</p>
+<h2>Severity levels</h2>
+<ul>
+<li><b>Sev 1:</b> Customer-facing outage or confirmed data breach. Page on-call within 5 minutes; incident commander assigned; status page updated every 30 minutes.</li>
+<li><b>Sev 2:</b> Degraded service for some customers. Acknowledge within 15 minutes.</li>
+<li><b>Sev 3:</b> Internal impact only. Next business day.</li>
+</ul>
+<h2>Breach handling</h2>
+<p>Suspected data breaches go to the Security Lead immediately. CERT-In must be notified within 6 hours of detection. Preserve logs; do not rotate affected keys until forensics has a snapshot, unless the key is actively being abused.</p>
+<h2>Post-incident</h2>
+<p>A blameless postmortem is due within 5 business days, with action items tracked as Jira tickets in the owning team's project.</p>
+</body>
+</html>
